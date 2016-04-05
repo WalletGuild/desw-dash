@@ -7,26 +7,22 @@ classifiers = [
 ]
 
 setup(
-    name='DeSW',
-    version='0.0.1.1',
-    packages=['desw', 'desw.plugins'],
-    url='https://bitbucket.org/deginner/desw',
+    name='DeSW-Dash',
+    version='0.0.1',
+    py_modules=['desw_dash'],
+    url='https://bitbucket.org/deginner/desw-dash',
     license='MIT',
     classifiers=classifiers,
     author='deginner',
     author_email='support@deginner.com',
-    description='An HTTP server application using Swagger 2.0, bitjws, and SQLAlchemy.',
+    description='Bitcoin plugin for the desw wallet platform.',
     setup_requires=['pytest-runner'],
     package_data={'desw': ['static/swagger.json']},
     install_requires=[
         'sqlalchemy>=1.0.9',
-        'secp256k1==0.11',
-        "bitjws==0.6.3.1",
-        "flask>=0.10.0",
-        "flask-login",
-        "flask-cors",
-        "flask-bitjws>=0.1.1.4",
-        "alchemyjsonschema"
+        'desw>=0.0.2',
+        'python-bitcoinrpc>=0.3',
+        'pycoin>=0.62'
     ],
     tests_require=['pytest', 'pytest-cov'],
     extras_require={"build": ["flask-swagger"]}
