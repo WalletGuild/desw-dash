@@ -5,11 +5,11 @@ import pytest
 import time
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 from desw import CFG, ses, eng, models
-from desw_bitcoin import *
+from desw_dash import *
 
-CURRENCY = 'BTC'
-NETWORK = 'Bitcoin'
-ADDYFIRSTCHARS = '123mn'
+CURRENCY = 'DASH'
+NETWORK = 'Dash'
+ADDYFIRSTCHARS = 'XYxy'
 
 testclient = AuthServiceProxy(CFG.get('test', NETWORK))
 
@@ -166,7 +166,7 @@ def test_receive_then_confirm():
     txs = create_client().listtransactions("*", 100)
     tx = None
     for t in txs:
-        if t['confirmations'] >= float(CFG.get('bitcoin', 'CONFS')) and t['category'] == 'receive':
+        if t['confirmations'] >= CONFS and t['category'] == 'receive':
             tx = t
             break
 
@@ -175,6 +175,7 @@ def test_receive_then_confirm():
         return
     user = create_user()
     assign_address(tx['address'], user)
+    print "confirmed tx to credit: %s" % tx['txid']
     main(['transaction', tx['txid']])
 
     for i in range(0, 50):
@@ -184,7 +185,7 @@ def test_receive_then_confirm():
         else:
             time.sleep(0.1)
     assert c is not None
-    c.state == 'unconfirmed'
+    c.state = 'unconfirmed'
     ses.add(c)
     ses.commit()
 

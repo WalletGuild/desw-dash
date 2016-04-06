@@ -17,7 +17,6 @@ setup(
     author_email='support@deginner.com',
     description='Bitcoin plugin for the desw wallet platform.',
     setup_requires=['pytest-runner'],
-    package_data={'desw': ['static/swagger.json']},
     install_requires=[
         'sqlalchemy>=1.0.9',
         'desw>=0.0.2',

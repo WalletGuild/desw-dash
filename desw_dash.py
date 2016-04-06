@@ -82,8 +82,8 @@ def process_receive(txid, details, confirmed=False):
         logger.info("txid already known. returning.")
         return
     state = 'complete' if confirmed else 'unconfirmed'
-    addyq = ses.query(models.Address)
-    addy = addyq.filter(models.Address.address == details['address']).first()
+    addy = ses.query(models.Address)\
+        .filter(models.Address.address == details['address']).first()
     if not addy:
         logger.warning("address not known. returning.")
         return
@@ -126,12 +126,14 @@ def main(sys_args=sys.argv[1:]):
         if info['blocks'] <= lastblock:
             return
         lastblock = info['blocks']
-        creds = ses.query(models.Credit)
-        creds.filter(models.Credit.state == 'unconfirmed')
-        creds.filter(models.Credit.network == NETWORK)
+        creds = ses.query(models.Credit)\
+            .filter(models.Credit.state == 'unconfirmed')\
+            .filter(models.Credit.network == NETWORK)
         for cred in creds:
-            txd = client.gettransaction(cred.ref_id.split(':')[0])
-            if txd['confirmations'] >= CONFS:
+            txid = cred.ref_id.split(':')[0] or cred.ref_id
+            txd = client.gettransaction(txid)
+            if txd['confirmations'] >= CONFS or \
+                    txd['bcconfirmations'] >= CONFS:
                 cred.state = 'complete'
                 for p, put in enumerate(txd['details']):
                     cred.ref_id = "%s:%s" % (txd['txid'], p)
