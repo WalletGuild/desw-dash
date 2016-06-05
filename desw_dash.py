@@ -68,6 +68,20 @@ def send_to_address(address, amount):
     return str(client.sendtoaddress(address, amount))
 
 
+def get_balance():
+    """
+    Get the wallet's balance. Returns a dict with 'available' and 'total'
+    balances, indicating what can be spent right now, and what is the total
+    including unconfirmed funds.
+
+    :rtype: dict
+    """
+    client = create_client()
+    total = float(client.getbalance("*", 0))
+    avail = float(client.getbalance("*", 2))
+    return {'total': total, 'available': avail}
+
+
 def process_receive(txid, details, confirmed=False):
     """
     Process an incoming transaction with the given txid and details.

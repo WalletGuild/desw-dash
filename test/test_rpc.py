@@ -202,3 +202,20 @@ def test_receive_then_confirm():
     assert bal.total == int(float(tx['amount']) * 1e8)
     assert bal.available == int(float(tx['amount']) * 1e8)
 
+
+def test_get_balance():
+    bals = get_balance()
+    print bals
+    assert 'total' in bals
+    assert 'available' in bals
+    assert bals['total'] >= bals['available']
+
+    recaddy = testclient.getnewaddress()
+    txid = send_to_address(recaddy, 0.01)
+
+    time.sleep(0.25)
+
+    bals2 = get_balance()
+    assert bals2['available'] <= bals['available'] - 0.01
+    assert bals2['total'] <= bals['total'] - 0.01
+
