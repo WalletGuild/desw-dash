@@ -2,18 +2,29 @@
 
 Dash RPC plugin for the Deginner Shared Wallet project. Allows sending, receiving, and other generic wallet functionality using Dashd over RPC.
 
+# Installation
+
+This plugin requires 2 installation steps. The first installs the python package and the second inserts empty balance records into the database.
+
+```
+python setup.py install
+python install.py
+```
+
 # Configuration
 
 This plugin expects a .ini configuration file. See `example_cfg.ini` for an example. Like other desw plugins, this file can be specified by setting the `DESW_CONFIG_FILE` environmental variable, like so.
 
 `export DESW_CONFIG_FILE="path/to/cfg.ini"`
 
-The most relevant part for this plugin is the dash configuration, which includes the RPC connection URL and a confirmation requirement. InstantX confirmations are counted.
+The most relevant part for this plugin is the dash configuration, which includes the RPC connection URL, a confirmation requirement, the transaction fee, and supported currencies. InstantX confirmations are counted.
 
 ```
 [dash]
 RPCURL: http://dashrpc:pass@127.0.0.1:8332
 CONFS: 3
+FEE: 10000
+CURRENCIES: ["DASH"]
 ```
 
 ### Dash.conf
