@@ -4,11 +4,12 @@ pycoin>=0.62
 
 # database
 sqlalchemy>=1.0.9
+sqlalchemy-models>=0.0.6
 
 # plugins
 # pending pr #61
 git+https://github.com/wm-noble/python-bitcoinrpc.git
 #python-bitcoinrpc>=0.3
 
-desw>=0.0.2
+desw>=0.0.3
 

@@ -9,15 +9,21 @@ walletnotify and blocknotify.
 import argparse
 import json
 import sys
+
+from ledger import Amount
+
+import datetime
+
+from desw.plugin import confirm_credit
 from pycoin.key.validate import is_address_valid
-from desw import CFG, models, ses, logger, process_credit, confirm_send
+from desw import CFG, ses, logger, process_credit, confirm_send, adjust_hw_balance
+from sqlalchemy_models import wallet as wm
 
 from bitcoinrpc.authproxy import AuthServiceProxy
 NETCODES = ['DASH', 'tDASH']
-NETWORK = 'Dash'
+NETWORK = 'dash'
 CURRENCIES = json.loads(CFG.get(NETWORK.lower(), 'CURRENCIES'))
 CONFS = int(CFG.get(NETWORK.lower(), 'CONFS'))
-FEE = int(CFG.get(NETWORK.lower(), 'FEE'))
 
 
 def create_client():
@@ -67,8 +73,8 @@ def send_to_address(address, amount):
     :rtype: str
     """
     client = create_client()
-    txid = str(client.sendtoaddress(address, amount))
-    adjust_hwbalance(available=-amount, total=-amount)
+    txid = str(client.sendtoaddress(address, amount.to_double()))
+    adjust_hw_balance(CURRENCIES[0], NETWORK, available=-amount, total=-amount)
     return txid
 
 
@@ -80,7 +86,7 @@ def get_balance():
 
     :rtype: dict
     """
-    hwb = ses.query(models.HWBalance).filter(models.HWBalance.network == NETWORK.lower()).order_by(models.HWBalance.time.desc()).first()
+    hwb = ses.query(wm.HWBalance).filter(wm.HWBalance.network == NETWORK).order_by(wm.HWBalance.time.desc()).first()
     return {'total': hwb.total, 'available': hwb.available}
 
 
@@ -93,40 +99,23 @@ def process_receive(txid, details, confirmed=False):
     :param dict details: The transaction details as returned by rpc client.
     :param bool confirmed: Has this transaction received enough confirmations?
     """
-    creds = ses.query(models.Credit).filter(models.Credit.ref_id == txid)
+    creds = ses.query(wm.Credit).filter(wm.Credit.ref_id == txid)
     if creds.count() > 0:
         logger.info("txid already known. returning.")
         return
-    state = 'complete' if confirmed else 'unconfirmed'
-    addy = ses.query(models.Address)\
-        .filter(models.Address.address == details['address']).first()
+    transaction_state = 'complete' if confirmed else 'unconfirmed'
+    addy = ses.query(wm.Address)\
+        .filter(wm.Address.address == details['address']).first()
     if not addy:
         logger.warning("address not known. returning.")
         return
-    amount = int(float(details['amount']) * 1e8)
+    amount = Amount("%s %s" % (float(details['amount']), CURRENCIES[0]))
     logger.info("crediting txid %s" % txid)
     process_credit(amount=amount, address=details['address'],
-                   currency=CURRENCIES[0], network=NETWORK, state=state,
+                   currency=CURRENCIES[0], network=NETWORK, transaction_state=transaction_state,
                    reference='tx received', ref_id=txid,
                    user_id=addy.user_id)
-    adjust_hwbalance(available=None, total=amount)
-
-
-def adjust_hwbalance(available=None, total=None):
-    if available is None and total is None:
-        return
-    hwb = ses.query(models.HWBalance).filter(models.HWBalance.network == NETWORK.lower()).order_by(models.HWBalance.time.desc()).first()
-    if available is not None:
-        hwb.available += available
-    if total is not None:
-        hwb.total += total
-    ses.add(hwb)
-    try:
-        ses.commit()
-    except Exception as e:
-        logger.exception(e)
-        ses.rollback()
-        ses.flush()
+    adjust_hw_balance(CURRENCIES[0], NETWORK, available=None, total=amount)
 
 
 lastblock = 0
@@ -150,46 +139,58 @@ def main(sys_args=sys.argv[1:]):
         confirmed = txd['confirmations'] >= CONFS
         for p, put in enumerate(txd['details']):
             if put['category'] == 'send':
-                confirm_send(put['address'], put['amount'],
-                             ref_id="%s:%s" % (txid, p))
+                try:
+                    confirm_send(put['address'], put['amount'],
+                                 ref_id=txid)
+                except ValueError as ve:
+                    logger.info(str(ve))
             elif put['category'] == 'receive':
-                process_receive("%s:%s" % (txid, p), put, confirmed)
+                try:
+                    process_receive(txid, put, confirmed)
+                except ValueError as ve:
+                    logger.info(str(ve))
 
     elif typ == 'block':
         info = client.getinfo()
         if info['blocks'] <= lastblock:
             return
         lastblock = info['blocks']
-        creds = ses.query(models.Credit)\
-            .filter(models.Credit.state == 'unconfirmed')\
-            .filter(models.Credit.network == NETWORK)
+        creds = ses.query(wm.Credit)\
+            .filter(wm.Credit.transaction_state == 'unconfirmed')\
+            .filter(wm.Credit.network == NETWORK)
+        modified = False
         for cred in creds:
             txid = cred.ref_id.split(':')[0] or cred.ref_id
             txd = client.gettransaction(txid)
             if txd['confirmations'] >= CONFS or \
                     txd['bcconfirmations'] >= CONFS:
-                cred.state = 'complete'
-                for p, put in enumerate(txd['details']):
-                    cred.ref_id = "%s:%s" % (txd['txid'], p)
-                ses.add(cred)
-        try:
-            ses.commit()
-        except Exception as e:
-            logger.exception(e)
-            ses.rollback()
-            ses.flush()
+                cred.load_commodities()
+                confirm_credit(credit=cred, txid=txd['txid'], session=ses)
+                # cred.transaction_state = 'complete'
+                # for p, put in enumerate(txd['details']):
+                #     cred.ref_id = "%s:%s" % (txd['txid'], p)
+                # ses.add(cred)
+                modified = True
+
+        if modified:
+            try:
+                ses.commit()
+            except Exception as e:
+                logger.exception(e)
+                ses.rollback()
+                ses.flush()
 
         # update balances
-        total = int(float(client.getbalance("*", 0)) * 1e8)
-        avail = int(float(info['balance']) * 1e8)
-        hwb = models.HWBalance(avail, total, CURRENCIES[0], NETWORK.lower())
+        total = Amount("%s %s" % (client.getbalance("*", 0), CURRENCIES[0]))
+        avail = Amount("%s %s" % (info['balance'], CURRENCIES[0]))
+        hwb = wm.HWBalance(avail, total, CURRENCIES[0], NETWORK)
         ses.add(hwb)
         try:
             ses.commit()
         except Exception as ie:
             ses.rollback()
             ses.flush()
-
+    ses.close()
 
 if __name__ == "__main__":
     main()

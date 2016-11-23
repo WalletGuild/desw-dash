@@ -1,14 +1,16 @@
-import bitjws
-import json
-import os
-import pytest
 import time
-from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
-from desw import CFG, ses, eng, models
-from desw_dash import *
+from ledger import Amount
+
+import bitjws
+from bitcoinrpc.authproxy import AuthServiceProxy
+from desw import CFG
+from sqlalchemy_models import wallet as wm, user as um
+
+from desw_dash import get_new_address, get_balance, send_to_address, validate_address, create_client, CONFS, main,\
+    ses
 
 CURRENCY = 'DASH'
-NETWORK = 'Dash'
+NETWORK = 'dash'
 ADDYFIRSTCHARS = 'XYxy'
 
 testclient = AuthServiceProxy(CFG.get('test', NETWORK))
@@ -25,7 +27,7 @@ def create_user():
     my_pubkey = privkey.pubkey.serialize()
     my_address = bitjws.pubkey_to_addr(my_pubkey)
     username = str(my_address)[0:8]
-    user = models.User(username=username)
+    user = um.User(username=username)
     ses.add(user)
     try:
         ses.commit()
@@ -33,10 +35,10 @@ def create_user():
         print ie
         ses.rollback()
         ses.flush()
-    userkey = models.UserKey(key=my_address, keytype='public', user_id=user.id,
-                      last_nonce=0)
+    userkey = um.UserKey(key=my_address, keytype='public', user_id=user.id,
+                         last_nonce=0)
     ses.add(userkey)
-    ses.add(models.Balance(total=0, available=0, currency=CURRENCY, reference='open account', user_id=user.id))
+    ses.add(wm.Balance(total=0, available=0, currency=CURRENCY, reference='open account', user_id=user.id))
     try:
         ses.commit()
     except Exception as ie:
@@ -47,15 +49,15 @@ def create_user():
 
 
 def assign_address(address, user):
-    dbaddy = ses.query(models.Address).filter(models.Address.address == address).first()
+    dbaddy = ses.query(wm.Address).filter(wm.Address.address == address).first()
     if dbaddy is None:
-        ses.add(models.Address(address, CURRENCY, NETWORK, 'active', user.id))
+        ses.add(wm.Address(address, CURRENCY, NETWORK, 'active', user.id))
     elif dbaddy.user_id != user.id:
         dbaddy.user_id = user.id
         ses.add(dbaddy)
     else:
         return
-    creds = ses.query(models.Credit).filter(models.Credit.address == address)
+    creds = ses.query(wm.Credit).filter(wm.Credit.address == address)
     for c in creds:
         ses.delete(c)
     try:
@@ -81,7 +83,7 @@ def test_validate_address():
 
 def test_send_to_address():
     recaddy = testclient.getnewaddress()
-    txid = send_to_address(recaddy, 0.01)
+    txid = send_to_address(recaddy, Amount("0.01 DASH"))
     assert isinstance(txid, str)
     assert len(recaddy) > 10
 
@@ -110,21 +112,21 @@ def test_receive():
     txid = testclient.sendtoaddress(address, 0.01)
 
     for i in range(0, 600):
-        c = ses.query(models.Credit).filter(models.Credit.address == address).first()
+        c = ses.query(wm.Credit).filter(wm.Credit.address == address).first()
         if c is not None:
             break
         else:
             time.sleep(0.1)
     assert c is not None
     assert c.address == address
-    assert c.amount == int(0.01 * 1e8)
+    assert c.amount == Amount("0.0100000 DASH")
     assert c.currency == CURRENCY
     assert c.network == NETWORK
-    assert c.state == 'unconfirmed'
+    assert c.transaction_state == 'unconfirmed'
     assert c.user_id == user.id
     assert txid in c.ref_id
-    bal = ses.query(models.Balance).filter(models.Balance.user_id == user.id).filter(models.Balance.currency == CURRENCY).first()
-    assert bal.total == int(0.01 * 1e8)
+    bal = ses.query(wm.Balance).filter(wm.Balance.user_id == user.id).filter(wm.Balance.currency == CURRENCY).first()
+    assert bal.total == Amount("0.0100000 DASH")
     assert bal.available == 0
 
 
@@ -144,22 +146,22 @@ def test_receive_already_confirmed():
     main(['transaction', tx['txid']])
 
     for i in range(0, 50):
-        c = ses.query(models.Credit).filter(models.Credit.address == tx['address']).first()
+        c = ses.query(wm.Credit).filter(wm.Credit.address == tx['address']).first()
         if c is not None:
             break
         else:
             time.sleep(0.1)
     assert c is not None
     assert c.address == tx['address']
-    assert c.amount == int(float(tx['amount']) * 1e8)
+    assert c.amount == Amount("%s DASH" % tx['amount'])
     assert c.currency == CURRENCY
     assert c.network == NETWORK
-    assert c.state == 'complete'
+    assert c.transaction_state == 'complete'
     assert c.user_id == user.id
     assert tx['txid'] in c.ref_id
-    bal = ses.query(models.Balance).filter(models.Balance.user_id == user.id).filter(models.Balance.currency == CURRENCY).first()
-    assert bal.total == int(float(tx['amount']) * 1e8)
-    assert bal.available == int(float(tx['amount']) * 1e8)
+    bal = ses.query(wm.Balance).filter(wm.Balance.user_id == user.id).filter(wm.Balance.currency == CURRENCY).first()
+    assert bal.total == Amount("%s DASH" % tx['amount'])
+    assert bal.available == Amount("%s DASH" % tx['amount'])
 
 
 def test_receive_then_confirm():
@@ -179,43 +181,43 @@ def test_receive_then_confirm():
     main(['transaction', tx['txid']])
 
     for i in range(0, 50):
-        c = ses.query(models.Credit).filter(models.Credit.address == tx['address']).first()
+        c = ses.query(wm.Credit).filter(wm.Credit.address == tx['address']).first()
         if c is not None:
             break
         else:
             time.sleep(0.1)
     assert c is not None
-    c.state = 'unconfirmed'
+    c.transaction_state = 'unconfirmed'
     ses.add(c)
     ses.commit()
 
     main(['block', ""])
+    c.load_commodities()
     assert c.address == tx['address']
-    assert c.amount == int(float(tx['amount']) * 1e8)
+    assert c.amount == Amount("%s DASH" % tx['amount'])
     assert c.currency == CURRENCY
     assert c.network == NETWORK
-    assert c.state == 'complete'
+    assert c.transaction_state == 'complete'
     assert c.user_id == user.id
     assert tx['txid'] in c.ref_id
     assert len(c.ref_id) > len(tx['txid'])
-    bal = ses.query(models.Balance).filter(models.Balance.user_id == user.id).filter(models.Balance.currency == CURRENCY).first()
-    assert bal.total == int(float(tx['amount']) * 1e8)
-    assert bal.available == int(float(tx['amount']) * 1e8)
+    bal = ses.query(wm.Balance).filter(wm.Balance.user_id == user.id).filter(wm.Balance.currency == CURRENCY).first()
+    assert bal.total == Amount("%s DASH" % tx['amount'])
+    assert bal.available == Amount("%s DASH" % tx['amount'])
 
 
 def test_get_balance():
     bals = get_balance()
-    print bals
     assert 'total' in bals
     assert 'available' in bals
     assert bals['total'] >= bals['available']
 
     recaddy = testclient.getnewaddress()
-    txid = send_to_address(recaddy, 0.01)
+    txid = send_to_address(recaddy, Amount("0.01 DASH"))
 
     time.sleep(0.25)
 
     bals2 = get_balance()
-    assert bals2['available'] <= bals['available'] - 0.01
-    assert bals2['total'] <= bals['total'] - 0.01
+    assert bals2['available'] <= bals['available'] - Amount("0.01 DASH")
+    assert bals2['total'] <= bals['total'] - Amount("0.01 DASH")
 
