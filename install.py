@@ -1,10 +1,10 @@
-from desw import CFG, models, ses, logger
+from desw import ses
+from sqlalchemy_models import wallet as wm
 
-hwb = models.HWBalance(0, 0, 'DASH', 'dash')
+hwb = wm.HWBalance(0, 0, 'DASH', 'dash')
 ses.add(hwb)
 try:
     ses.commit()
 except Exception as ie:
     ses.rollback()
     ses.flush()
-
